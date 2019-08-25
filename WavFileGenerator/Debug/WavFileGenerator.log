@@ -1,2 +1,27 @@
-﻿  WavFileGenerator.cpp
+﻿  FileBuilder.cpp
+  WavFileGenerator.cpp
+c:\program files (x86)\microsoft visual studio\2017\enterprise\vc\tools\msvc\14.16.27023\include\utility(173): warning C4244: 'initializing': conversion from '_Ty' to '_Ty2', possible loss of data
+          with
+          [
+              _Ty=double
+          ]
+          and
+          [
+              _Ty2=int
+          ]
+  c:\users\mark mahony\source\repos\wavfilegenerator\wavfilegenerator\wavfilegenerator.cpp(186): note: see reference to function template instantiation 'std::pair<int,int>::pair<int,_Ty,0>(_Other1 &&,_Other2 &&) noexcept' being compiled
+          with
+          [
+              _Ty=double,
+              _Other1=int,
+              _Other2=double
+          ]
+  c:\users\mark mahony\source\repos\wavfilegenerator\wavfilegenerator\wavfilegenerator.cpp(186): note: see reference to function template instantiation 'std::pair<int,int>::pair<int,_Ty,0>(_Other1 &&,_Other2 &&) noexcept' being compiled
+          with
+          [
+              _Ty=double,
+              _Other1=int,
+              _Other2=double
+          ]
+  Generating Code...
   WavFileGenerator.vcxproj -> C:\Users\Mark Mahony\source\repos\WavFileGenerator\Debug\WavFileGenerator.exe

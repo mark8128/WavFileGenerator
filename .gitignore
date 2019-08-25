@@ -6,6 +6,7 @@
 *.lo
 *.o
 *.obj
+*.pdb
 
 # Precompiled Headers
 *.gch
@@ -30,3 +31,16 @@
 *.exe
 *.out
 *.app
+
+# Data files
+*.csv
+*.xlsx
+*.wav
+
+#Debug files
+*.tlog
+*.log
+*.suo
+*.db
+*.opendb
+*.ipch

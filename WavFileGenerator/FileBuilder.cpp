@@ -5,6 +5,7 @@
 #include "FileBuilder.h"
 #include <fstream>
 #include "Note.h"
+#include <numeric>
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -13,15 +14,38 @@ using namespace std;
 
 const short FileBuilder::BytesPerSample = 2;
 
+const std::unordered_map<
+    FileBuilder::SoundStyle,
+    const std::function<double(FileBuilder&, double, int)>>& FileBuilder::SampleFunctions =
+{
+    { FileBuilder::SoundStyle::SineWave, &FileBuilder::SineWaveSample },
+    { FileBuilder::SoundStyle::HarmonicSine, &FileBuilder::HarmonicSample },
+    { FileBuilder::SoundStyle::LowHarmonicSine, &FileBuilder::LowHarmonicSample },
+    { FileBuilder::SoundStyle::BlurredWaves, &FileBuilder::ManyCloseWaves },
+    { FileBuilder::SoundStyle::RoundedFrequencies, &FileBuilder::RoundedFreqMult },
+    { FileBuilder::SoundStyle::MattBassEFirstSecondPureHarmonics, &FileBuilder::MattBassPureHarmonics },
+    { FileBuilder::SoundStyle::MattBassEFirstSecondBlendedHarmonics, &FileBuilder::MattBassBlendedHarmonics },
+    { FileBuilder::SoundStyle::MattBassE2s3sPure, &FileBuilder::MattBass2sTo3sPure },
+};
+
 FileBuilder::FileBuilder() :
-    _sampleRate(44100)
+    _sampleRate(44100),
+    _style(SoundStyle::RoundedFrequencies)
 {
 
 }
 
 FileBuilder::FileBuilder(std::vector<Note> notes) :
     _notes(notes),
-    _sampleRate(44100)
+    _sampleRate(44100),
+    _style(SoundStyle::RoundedFrequencies)
+{
+}
+
+FileBuilder::FileBuilder(std::vector<Note> notes, FileBuilder::SoundStyle style) :
+    _notes(notes),
+    _sampleRate(44100),
+    _style(style)
 {
 }
 
@@ -169,7 +193,7 @@ void FileBuilder::GenerateNotes(_Out_ std::vector<std::byte>& buffer)
     // Since notes can overlap the maximum sample value is not known. It must be that |value| < 32768
     // so the values are first calculated in an int vector, normalized, then converted to the buffer
     vector<int> samples;
-    GetSamplesFromNotes(&FileBuilder::RoundedFreqMult, samples);
+    GetSamplesFromNotes(SampleFunctions.at(_style), samples);
 
     // Normalize the values
     NormalizeValues(samples, buffer);
@@ -205,6 +229,44 @@ void FileBuilder::GetSamplesFromNotes(_In_ const std::function<double(FileBuilde
     }
 }
 
+void FileBuilder::NormalizeValues(_In_ std::vector<int>& samples, _Out_ std::vector<std::byte>& buffer)
+{
+    static_assert(sizeof(short) == BytesPerSample);
+
+    // Resize the output buffer based on the samples provided
+    buffer.clear();
+    buffer.resize(samples.size() * BytesPerSample);
+
+    auto result = std::minmax_element(samples.begin(), samples.end());
+    const int maxMagnitude = max(abs(*result.first), abs(*result.second));
+
+    // 32760 is the maximum amplitude for a 16 bit sample.
+    double normalizer = 32760.0 / maxMagnitude;
+
+    // Normalize the values by max
+    for (size_t i = 0; i < samples.size(); i++)
+    {
+        int normalized = static_cast<int>(samples[i] * normalizer);
+
+        // Integer values (short) are little endian. Put the high order bit in the higher range in the buffer
+        buffer[i*BytesPerSample] = static_cast<byte>(normalized);
+        buffer[i*BytesPerSample + 1] = static_cast<byte>(normalized >> 8);
+    }
+}
+
+uint32_t FileBuilder::GetTotalNumberOfSamples()
+{
+    static const auto pred = [](Note left, Note right) -> bool
+    {
+        return ((left._startTime + left._duration) < (right._startTime + right._duration));
+    };
+
+    Note last = *std::max_element(_notes.begin(), _notes.end(), pred);
+
+    const double songDuration = last._startTime + last._duration;
+    return static_cast<uint32_t>(songDuration * _sampleRate + 0.5 /* rounding */);
+}
+
 double FileBuilder::SineWaveSample(double freq, int sampleIndex)
 {
     return sin(2.0 * M_PI * freq * sampleIndex / _sampleRate);
@@ -213,17 +275,17 @@ double FileBuilder::SineWaveSample(double freq, int sampleIndex)
 double FileBuilder::HarmonicSample(double freq, int sampleIndex)
 {
     return sin(2.0 * M_PI * freq * sampleIndex / _sampleRate) +
-            0.1 * sin(4.0 * M_PI * freq * sampleIndex / _sampleRate) +
-            0.34 * sin(6.0 * M_PI * freq * sampleIndex / _sampleRate) +
-            0.06 * sin(8.0 * M_PI * freq * sampleIndex / _sampleRate) +
-            0.05 * sin(10.0 * M_PI * freq * sampleIndex / _sampleRate) +
-            0.05 * sin(12.0 * M_PI * freq * sampleIndex / _sampleRate);
+        0.1 * sin(4.0 * M_PI * freq * sampleIndex / _sampleRate) +
+        0.34 * sin(6.0 * M_PI * freq * sampleIndex / _sampleRate) +
+        0.06 * sin(8.0 * M_PI * freq * sampleIndex / _sampleRate) +
+        0.05 * sin(10.0 * M_PI * freq * sampleIndex / _sampleRate) +
+        0.05 * sin(12.0 * M_PI * freq * sampleIndex / _sampleRate);
 }
 double FileBuilder::LowHarmonicSample(double freq, int sampleIndex)
 {
     return sin(2.0 * M_PI * freq * sampleIndex / _sampleRate) +
         0.5 * sin(M_PI * freq * sampleIndex / _sampleRate) +
-        0.25 * sin (4.0 * M_PI * freq * sampleIndex / _sampleRate);
+        0.25 * sin(4.0 * M_PI * freq * sampleIndex / _sampleRate);
 }
 
 double FileBuilder::ManyCloseWaves(double freq, int sampleIndex)
@@ -278,73 +340,89 @@ double FileBuilder::RoundedFreqMult(double freq, int sampleIndex)
     return (first + (second / 4.0) /*+ (half / 2.0)*/);
 }
 
-void FileBuilder::NormalizeValues(_In_ std::vector<int>& samples, _Out_ std::vector<std::byte>& buffer)
+double FileBuilder::MattBassPureHarmonics(double freq, int sampleIndex)
 {
-    static_assert(sizeof(short) == BytesPerSample);
+    static std::vector<double> ampModifiers = { 
+        4.737,  // 1
+        16.434, // 2
+        37.369, // 3
+        15.565, // 4
+        0.0,    // 5
+        3.58,   // 6
+        6.580,  // 7
+        12.190, // 8
+        3.546,  // 9
+    };
+    
+    double agg = 0.0;
+    std::vector<double> harmonics;
 
-    // Resize the output buffer based on the samples provided
-    buffer.clear();
-    buffer.resize(samples.size() * BytesPerSample);
-
-    auto result = std::minmax_element(samples.begin(), samples.end());
-    const int maxMagnitude = max(abs(*result.first), abs(*result.second));
-
-    // 32760 is the maximum amplitude for a 16 bit sample.
-    double normalizer = 32760.0 / maxMagnitude;
-
-    // Normalize the values by max
-    for (size_t i = 0; i < samples.size(); i++)
+    // Compute the harmonics
+    for (size_t i = 0; i < ampModifiers.size(); i++)
     {
-        int normalized = static_cast<int>(samples[i] * normalizer);
-
-        // Integer values (short) are little endian. Put the high order bit in the higher range in the buffer
-        buffer[i*BytesPerSample] = static_cast<byte>(normalized);
-        buffer[i*BytesPerSample + 1] = static_cast<byte>(normalized >> 8);
+        harmonics.push_back(sin(i * 2.0 * M_PI * freq * sampleIndex / _sampleRate));
     }
+
+    // Compute the dot product to generate the weighted result
+    return std::inner_product(ampModifiers.begin(), ampModifiers.end(), harmonics.begin(), 0.0);
 }
 
-uint32_t FileBuilder::GetTotalNumberOfSamples()
+double FileBuilder::MattBassBlendedHarmonics(double freq, int sampleIndex)
 {
-    static const auto pred = [](Note left, Note right) -> bool
-    {
-        return ((left._startTime + left._duration) < (right._startTime + right._duration));
+    static std::vector<double> ampModifiers = {
+    4.737,  // 1
+    16.434, // 2
+    37.369, // 3
+    15.565, // 4
+    0.0,    // 5
+    3.58,   // 6
+    6.580,  // 7
+    12.190, // 8
+    3.546,  // 9
     };
 
-    Note last = *std::max_element(_notes.begin(), _notes.end(), pred);
+    double agg = 0.0;
+    std::vector<double> harmonics;
 
-    const double songDuration = last._startTime + last._duration;
-    return static_cast<uint32_t>(songDuration * _sampleRate + 0.5 /* rounding */);
+    // Compute the harmonics
+    for (size_t i = 0; i < ampModifiers.size(); i++)
+    {
+        const double data =
+            0.0902 * sin(i * 2.0 * M_PI * freq * 0.984 * sampleIndex / _sampleRate) +
+            0.1784 * sin(i * 2.0 * M_PI * freq * 0.992 * sampleIndex / _sampleRate) +
+            0.4374 * sin(i * 2.0 * M_PI * freq * 1.000 * sampleIndex / _sampleRate) +
+            0.2060 * sin(i * 2.0 * M_PI * freq * 1.008 * sampleIndex / _sampleRate) +
+            0.0880 * sin(i * 2.0 * M_PI * freq * 1.016 * sampleIndex / _sampleRate);
+
+        harmonics.push_back(data);
+    }
+
+    // Compute the dot product to generate the weighted result
+    return std::inner_product(ampModifiers.begin(), ampModifiers.end(), harmonics.begin(), 0.0);
 }
 
-void FileBuilder::GenerateConcertA(_Out_ std::vector<std::byte>& buffer)
+double FileBuilder::MattBass2sTo3sPure(double freq, int sampleIndex)
 {
-    buffer.clear();
-    
-    // Calculate the appropriate range of values of the sine wave
-    static_assert(sizeof(short) == BytesPerSample);
+    static std::vector<double> ampModifiers = {
+        5.8233,     // 1
+        49.1718,    // 2
+        28.5168,    // 3
+        10.9535,    // 4
+        0,          // 5
+        0,          // 6
+        3.5697,     // 7
+        1.9650,     // 8
+    };
 
-    // Generate a 2 second concert A
-    double freq = 440.0;
-    uint32_t duration = 2;
+    double agg = 0.0;
+    std::vector<double> harmonics;
 
-    // Max value of 16 bit sample - this must not be exceeded
-    static const short amplitude = 32760;
-
-    // To generate the wave form calculate the sine wave at each sample time
-    // Each point is calculated as:
-    // sample = A*sin((2*pi*freq)*(i/sampleRate))
-
-    const uint32_t numberOfSamples = duration * _sampleRate;
-    buffer.resize(numberOfSamples * BytesPerSample);
-
-    for (uint32_t i = 0; i < numberOfSamples; i++)
+    // Compute the harmonics
+    for (size_t i = 0; i < ampModifiers.size(); i++)
     {
-        short value = static_cast<short>(amplitude * sin((2.0 * M_PI * freq * i / _sampleRate)));
-
-        // Integer values (short) are little endian. Put the high order bit in the higher range in the buffer
-        buffer[i*BytesPerSample] = static_cast<byte>(value);
-        buffer[i*BytesPerSample + 1] = static_cast<byte>(value >> 8);
-
-        //memcpy_s(&buffer[i * BytesPerSample], sizeof(short), &value, sizeof(short));
+        harmonics.push_back(sin(i * 2.0 * M_PI * freq * sampleIndex / _sampleRate));
     }
+
+    // Compute the dot product to generate the weighted result
+    return std::inner_product(ampModifiers.begin(), ampModifiers.end(), harmonics.begin(), 0.0);
 }
