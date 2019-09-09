@@ -5,14 +5,18 @@
 #include "FileBuilder.h"
 #include "Fourier.h"
 #include "FurElise.h"
+#include <map>
 #include "Note.h"
 #include "WavReader.h"
 #include "WavSamples.h"
 
 void ToCSV(const std::vector<int>&, const std::wstring&);
 void ToCSV(const std::vector<std::complex<double>>&, const std::wstring&);
-void ToCSV(const std::vector<std::pair<int, int>>& data, const std::wstring& fileName);
-void ToMagnitudeCSV(const std::vector<std::complex<double>>&, const std::wstring&);
+void ToMultiFFTCSV(
+    const std::vector<std::vector<std::pair<int, int>>>& data,
+    const std::vector<int>& startingSamples,
+    const std::wstring& fileName);
+void FFTToMagnitude(const std::vector<std::complex<double>>&, _Out_ std::vector<std::pair<int, int>>& magData);
 
 void GenerateWav()
 {
@@ -49,16 +53,7 @@ void GenerateFFTTestWav()
 
     notes.push_back(concertA);
     notes.push_back(middleC);
-    /*
-    notes.push_back(Note(Tone::C, 4, 0.25, 0.05));
-    notes.push_back(Note(Tone::D, 4, 0.3, 0.05));
-    notes.push_back(Note(Tone::E, 4, 0.35, 0.05));
-    notes.push_back(Note(Tone::F, 4, 0.4, 0.05));
-    notes.push_back(Note(Tone::G, 4, 0.45, 0.05));
-    notes.push_back(Note(Tone::A, 4, 0.5, 0.05));
-    notes.push_back(Note(Tone::B, 4, 0.55, 0.05));
-    notes.push_back(Note(Tone::C, 5, 0.6, 0.05));*/
-
+    
     FileBuilder builder(notes);
     builder.ToFile(L"C:\\Users\\Mark Mahony\\source\\repos\\WavFileGenerator\\BassRecording\\RangeFFTTest.wav");
 }
@@ -96,7 +91,7 @@ void ProcessRecording(const std::wstring& fileName, const std::wstring& outputUn
     //fourier.ComputeFFT(samples._samples[0], fft);
     fourier.ComputeMultiThreadedFFTForRange(
         samples._samples[0],
-        8,              // Process on 8 threads
+        8,              // Only compute the transform for the first 8th of the frequency domain
         startSample,    // Start the FFT on this sample
         endSample,      // Only proccess to this sample
         fft);
@@ -104,7 +99,72 @@ void ProcessRecording(const std::wstring& fileName, const std::wstring& outputUn
     std::wostringstream outputFileName;
     outputFileName << fileName << outputUniquifier;
     ToCSV(fft, outputFileName.str());
-    ToMagnitudeCSV(fft, outputFileName.str());
+
+    std::vector<std::pair<int, int>> magData;
+    FFTToMagnitude(fft, magData);
+    //ToCSV(magData, outputFileName.str());
+}
+
+void ComputeFFTsOnInterval(
+    const std::vector<int>& samples,
+    int interval,
+    int intervalLegnth,
+    _Out_ std::map<int, std::vector<std::complex<double>>>& ffts)
+{
+    Fourier fourier;
+    std::vector<std::complex<double>> fft;
+
+    const int maxSample = samples.size();
+
+    for (int startSample = 0; (startSample + intervalLegnth) <= maxSample; startSample += interval)
+    {
+        fft.clear();
+
+        fourier.ComputeMultiThreadedFFTForRange(
+            samples,
+            20,             // Only compute the first 5% of the transform
+            startSample,    // Start the FFT on this sample
+            (startSample + intervalLegnth),      // Only proccess to this sample
+            fft);
+
+        // start sample to fourier transform
+        ffts[startSample] = fft;
+    }
+}
+
+void RollingTransformAnalysis(const std::wstring& fileName, const std::wstring& outputUniquifier)
+{
+    WavReader reader;
+    WavSamples samples;
+
+    std::wostringstream path;
+    path << L"C:\\Users\\Mark Mahony\\source\\repos\\WavFileGenerator\\BassRecording\\" << fileName << ".wav";
+
+    reader.ReadFile(path.str().c_str(), samples);
+
+    std::map<int, std::vector<std::complex<double>>> ffts;
+    ComputeFFTsOnInterval(samples._samples[0], 44100 /* interval */, 44100 /* interval length */, ffts);
+
+    // The output is a vector of vectors. The outer vector is the same size as the number of FFTs performed
+    // The inner vector contains the magnitude output of each FFT. The first element in the pair in the inner
+    // vector is the frequency, the second value is the magnitude.
+    std::vector<std::vector<std::pair<int, int>>> output;
+    std::vector<int> startingSamples;
+    output.resize(ffts.size());
+    size_t index = 0;
+
+    for (const auto& fft : ffts)
+    {
+        startingSamples.push_back(fft.first);
+
+        FFTToMagnitude(fft.second, output[index]);
+        index++;
+    }
+
+    std::wostringstream outputFileName;
+    outputFileName << fileName << outputUniquifier;
+
+    ToMultiFFTCSV(output, startingSamples, outputFileName.str());
 }
 
 void ToCSV(const std::vector<int>& data, const std::wstring& fileName)
@@ -153,10 +213,13 @@ void ToCSV(const std::vector<std::complex<double>>& data, const std::wstring& fi
     }
 }
 
-void ToCSV(const std::vector<std::pair<int, int>>& data, const std::wstring& fileName)
+void ToMultiFFTCSV(
+    const std::vector<std::vector<std::pair<int, int>>>& data,
+    const std::vector<int>& startingSamples,
+    const std::wstring& fileName)
 {
     std::wostringstream path;
-    path << L"C:\\Users\\Mark Mahony\\source\\repos\\WavFileGenerator\\Output\\" << fileName << "SortedMag.csv";
+    path << L"C:\\Users\\Mark Mahony\\source\\repos\\WavFileGenerator\\Output\\" << fileName << ".csv";
 
     FILE* pFile = nullptr;
     errno_t err = _wfopen_s(&pFile, path.str().c_str(), L"wb");
@@ -165,9 +228,48 @@ void ToCSV(const std::vector<std::pair<int, int>>& data, const std::wstring& fil
     {
         if (err == 0)
         {
-            for (const auto& sample : data)
+            // Iterate over the vector of vectors to form the following table:
+            // Freq, mag of first fft, mag of 2nd fft, ...
+            std::stringstream csvRow;
+            int fftSum = 0;
+
+            // Add a column header for the frequencies
+            csvRow << "f";
+
+            // Add the starting samples as column headers
+            for (const auto& sample : startingSamples)
             {
-                fprintf(pFile, "%d,%d\n", sample.first, sample.second);
+                csvRow << "," << sample;
+            }
+
+            // Add the header for the sum column
+            csvRow << ",,sum\n";
+
+            // Flush it to the file
+            fprintf(pFile, csvRow.str().c_str());
+            csvRow.clear();
+
+            for (int freqIndex = 0; freqIndex < data[0].size(); freqIndex++)
+            {
+                csvRow.clear();
+                fftSum = 0;
+
+                // Push the frequency
+                csvRow << data[0][freqIndex].first << ",";
+
+                // Push the data from each FFT for this frequncy
+                for (int fftIndex = 0; fftIndex < data.size(); fftIndex++)
+                {
+                    const int magData = data[fftIndex][freqIndex].second;
+                    
+                    fftSum += magData;
+                    csvRow << magData << ",";
+                }
+
+                // Push the sum across the FFTs after a space
+                csvRow << "," << fftSum << "\n";
+
+                fprintf(pFile, csvRow.str().c_str());
             }
         }
 
@@ -175,9 +277,8 @@ void ToCSV(const std::vector<std::pair<int, int>>& data, const std::wstring& fil
     }
 }
 
-void ToMagnitudeCSV(const std::vector<std::complex<double>>& data, const std::wstring& fileName)
+void FFTToMagnitude(const std::vector<std::complex<double>>& data, _Out_ std::vector<std::pair<int, int>>& magData)
 {
-    std::vector<std::pair<int, int>> magData;
     magData.resize(data.size());
 
     // Convert to magnitude
@@ -191,20 +292,14 @@ void ToMagnitudeCSV(const std::vector<std::complex<double>>& data, const std::ws
     {
         magData[i].first = i;
     }
-
-    // Sort by magnitude
-    std::sort(magData.begin(), magData.end(), [](std::pair<int, int> l, std::pair<int, int> r)
-    {
-        return (l.second > r.second);
-    });
-
-    ToCSV(magData, fileName);
 }
 
 int main()
 {
     // ProcessRecording(L"E", L"2sTo3s", 88200, 132300);
-    GenerateMattBass();
+    // GenerateMattBass();
+
+    RollingTransformAnalysis(L"E", L"RollingTransformTable");
 
     return 0;
 }
