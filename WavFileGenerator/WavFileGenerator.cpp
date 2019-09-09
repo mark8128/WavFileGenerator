@@ -7,6 +7,7 @@
 #include "FurElise.h"
 #include <map>
 #include "Note.h"
+#include "RecordingAnalyzer.h"
 #include "WavReader.h"
 #include "WavSamples.h"
 
@@ -299,7 +300,11 @@ int main()
     // ProcessRecording(L"E", L"2sTo3s", 88200, 132300);
     // GenerateMattBass();
 
-    RollingTransformAnalysis(L"E", L"RollingTransformTable");
+    // RollingTransformAnalysis(L"E", L"RollingTransformTable");
+
+    RecordingAnalyzer analyzer;
+    analyzer.AnalyzeRecording(L"E");
+    analyzer.ToCSV(L"E.RollingTransformTable");
 
     return 0;
 }

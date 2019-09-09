@@ -152,6 +152,7 @@
     <ClInclude Include="FurElise.h" />
     <ClInclude Include="Metronome.h" />
     <ClInclude Include="Note.h" />
+    <ClInclude Include="RecordingAnalyzer.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="WavReader.h" />
@@ -163,6 +164,7 @@
     <ClCompile Include="FurElise.cpp" />
     <ClCompile Include="Metronome.cpp" />
     <ClCompile Include="Note.cpp" />
+    <ClCompile Include="RecordingAnalyzer.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
