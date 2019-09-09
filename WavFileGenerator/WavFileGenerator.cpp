@@ -247,11 +247,11 @@ void ToMultiFFTCSV(
 
             // Flush it to the file
             fprintf(pFile, csvRow.str().c_str());
-            csvRow.clear();
+            csvRow.str(std::string());
 
             for (int freqIndex = 0; freqIndex < data[0].size(); freqIndex++)
             {
-                csvRow.clear();
+                csvRow.str(std::string());
                 fftSum = 0;
 
                 // Push the frequency
